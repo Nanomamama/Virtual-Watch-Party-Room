@@ -43,3 +43,5 @@ create or replace function public.make_invite_code()
 returns text language sql volatile as $$
   select upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 6));
 $$;
+
+alter publication supabase_realtime add table public.messages;
