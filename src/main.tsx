@@ -4,6 +4,7 @@ import { Copy, Headphones, Mic, MoreHorizontal, Pause, Play, Send, Settings, Smi
 import { supabase, createRoom, joinRoom } from './lib/supabase';
 import { pusher, subscribeToRoom, type RoomEvent } from './lib/pusher';
 import './styles.css';
+import './auth.css';
 
 const colors = ['#f1a47b','#95b5ff','#dca6ec','#e7cf76','#c8b6ff'];
 const colorFor = (id:string) => colors[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%colors.length];
