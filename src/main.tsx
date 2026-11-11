@@ -1,48 +1,27 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Copy, Headphones, Mic, MoreHorizontal, Pause, Play, Send, Settings, Smile, Volume2, X } from 'lucide-react';
+import { Copy, Headphones, Mic, MoreHorizontal, Pause, Play, Send, Settings, Smile, Volume2 } from 'lucide-react';
+import { supabase, createRoom, joinRoom } from './lib/supabase';
+import { pusher, subscribeToRoom, type RoomEvent } from './lib/pusher';
 import './styles.css';
 
-const people = [
-  { name:'Mina', handle:'@mina', initials:'M', color:'#f1a47b', status:'Watching' },
-  { name:'Keen', handle:'@keen', initials:'K', color:'#95b5ff', status:'Watching' },
-  { name:'Tao', handle:'@tao', initials:'T', color:'#dca6ec', status:'Away' },
-  { name:'Nina', handle:'@nina', initials:'N', color:'#e7cf76', status:'Watching' },
-];
-const messages = [
-  { name:'Mina', time:'9:42 PM', text:'the color grading in this scene is unreal', avatar:'M', color:'#f1a47b' },
-  { name:'Keen', time:'9:43 PM', text:'right?? feels like a dream', avatar:'K', color:'#95b5ff' },
-  { name:'Nina', time:'9:44 PM', text:'wait for the next shot 👀', avatar:'N', color:'#e7cf76' },
-];
-
+const colors = ['#f1a47b','#95b5ff','#dca6ec','#e7cf76','#c8b6ff'];
+const colorFor = (id:string) => colors[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%colors.length];
 function App(){
-  const [playing,setPlaying] = useState(true);
-  const [chat,setChat] = useState('');
-  const [chatMessages,setChatMessages] = useState(messages);
-  const [reactions,setReactions] = useState<string[]>([]);
-  const send = () => { if(chat.trim()){ setChatMessages([...chatMessages,{name:'You',time:'now',text:chat,avatar:'Y',color:'#c8b6ff'}]); setChat(''); }};
-  const react = (emoji:string) => { setReactions([...reactions,emoji]); setTimeout(()=>setReactions(r=>r.slice(1)), 1800); };
-  return <main className="shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">◒</span><span>ORBIT</span></div><div className="room-meta"><span className="live-dot"/> ROOM <b>late-night cinema</b><span className="divider"/> <span className="lock">⌁</span> PRIVATE</div><div className="top-actions"><button className="icon-btn"><Headphones size={16}/></button><button className="share"><Copy size={15}/> Copy invite</button><div className="avatar small" style={{background:'#c8b6ff'}}>Y</div></div></header>
-    <div className="workspace">
-      <section className="stage-section">
-        <div className="stage-head"><div><p className="eyebrow">NOW WATCHING</p><h1>After Yang</h1></div><div className="sync"><span className="sync-dot"/> synced <b>00:42:18</b></div></div>
-        <div className="video-frame">
-          <div className="film-bg"><div className="sun"/><div className="film-copy"><span>A film by<br/><strong>KOGONADA</strong></span><em>AFTER<br/>YANG</em></div><div className="grain"/></div>
-          <div className="reaction-layer">{reactions.map((r,i)=><span key={i} className="float-reaction" style={{left:`${25+i*17}%`}}>{r}</span>)}</div>
-          <div className="video-top"><span>HD</span><span>1:18:34</span></div>
-          <div className="video-bottom"><div className="progress"><span/></div><div className="controls"><button onClick={()=>setPlaying(!playing)}>{playing?<Pause fill="white"/>:<Play fill="white"/>}</button><span className="time">42:18 / 1:18:34</span><span className="control-spacer"/><button><Volume2/></button><button><Settings/></button><button className="fullscreen">⛶</button></div></div>
-        </div>
-        <div className="quick-reactions"><span>React</span>{['❤️','😂','👏','😮','🔥'].map(e=><button key={e} onClick={()=>react(e)}>{e}</button>)}<button className="add-react"><Smile size={15}/></button></div>
-      </section>
-      <aside className="side-panel">
-        <div className="panel-tabs"><button className="active">CHAT <span>{chatMessages.length}</span></button><button>PEOPLE <span>{people.length}</span></button></div>
-        <div className="presence"><div className="presence-avatars">{people.map(p=><div className="avatar mini" key={p.name} style={{background:p.color}}>{p.initials}</div>)}</div><span><b>{people.length} people</b> in the room</span></div>
-        <div className="chat-list">{chatMessages.map((m,i)=><div className="message" key={i}><div className="avatar mini" style={{background:m.color}}>{m.avatar}</div><div><div className="message-meta"><b>{m.name}</b><span>{m.time}</span></div><p>{m.text}</p></div></div>)}</div>
-        <div className="chat-compose"><div className="input-wrap"><input value={chat} onChange={e=>setChat(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Say something..."/><button><Smile size={17}/></button></div><button className="send" onClick={send}><Send size={16}/></button></div>
-      </aside>
-    </div>
-    <footer className="footer"><div className="footer-left"><span className="pulse"/> Playback is synced for everyone</div><div className="footer-center">You joined <b>12 minutes ago</b></div><div className="footer-right"><button><Mic size={15}/> Mute</button><button><MoreHorizontal size={17}/></button></div></footer>
-  </main>
+  const [session,setSession]=useState<any>(null),[room,setRoom]=useState<any>(null),[mode,setMode]=useState<'login'|'signup'>('login');
+  const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authError,setAuthError]=useState(''),[roomCode,setRoomCode]=useState(''),[roomError,setRoomError]=useState('');
+  const [messages,setMessages]=useState<any[]>([]),[chat,setChat]=useState(''),[playing,setPlaying]=useState(false),[position,setPosition]=useState(0),[reactions,setReactions]=useState<string[]>([]),[copied,setCopied]=useState(false);
+  const user=session?.user, displayName=user?.user_metadata?.name||user?.email?.split('@')[0]||'You';
+  useEffect(()=>{if(!supabase)return;supabase.auth.getSession().then(({data})=>setSession(data.session));const {data:{subscription}}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s));return()=>subscription.unsubscribe()},[]);
+  useEffect(()=>{if(!user||!room||!supabase)return;let live=true;const load=async()=>{const {data}=await supabase.from('messages').select('id,body,created_at,user_id').eq('room_id',room.id).order('created_at',{ascending:true}).limit(100);if(live&&data)setMessages(data.map(m=>({...m,name:m.user_id===user.id?'You':'Guest',initials:m.user_id===user.id?'Y':'G',color:colorFor(m.user_id)})))};load();const c=supabase.channel(`room-db-${room.id}`).on('postgres_changes',{event:'INSERT',schema:'public',table:'messages',filter:`room_id=eq.${room.id}`},({new:m}:any)=>{if(m.user_id!==user.id)setMessages(x=>[...x,{...m,name:'Guest',initials:'G',color:colorFor(m.user_id)}])}).subscribe();return()=>{live=false;supabase.removeChannel(c)}},[user,room]);
+  useEffect(()=>{if(!room)return;return subscribeToRoom(room.id,(e:RoomEvent)=>{if(e.type==='play'){setPlaying(true);setPosition(e.position)}if(e.type==='pause'){setPlaying(false);setPosition(e.position)}if(e.type==='seek')setPosition(e.position);if(e.type==='reaction'){setReactions(x=>[...x,e.emoji]);setTimeout(()=>setReactions(x=>x.slice(1)),1800)}if(e.type==='chat')setMessages(x=>[...x,{id:crypto.randomUUID(),body:e.body,created_at:new Date().toISOString(),name:'Guest',initials:'G',color:'#95b5ff'}])})},[room]);
+  const emit=(type:string,payload:any)=>{if(pusher&&room)pusher.channel(`private-room-${room.id}`).trigger(`client-${type}`,payload).catch(()=>{})};
+  const auth=async()=>{if(!supabase)return setAuthError('Missing Supabase environment variables');const r=mode==='login'?await supabase.auth.signInWithPassword({email,password}):await supabase.auth.signUp({email,password,options:{data:{name:email.split('@')[0]}}});if(r.error)setAuthError(r.error.message)};
+  const send=async()=>{if(!chat.trim()||!room||!user||!supabase)return;const body=chat.trim();setChat('');await supabase.from('messages').insert({room_id:room.id,user_id:user.id,body});emit('chat',{body,userId:user.id})};
+  const sync=(next:boolean)=>{setPlaying(next);emit(next?'play':'pause',{position,userId:user.id})};
+  const react=(emoji:string)=>{setReactions(x=>[...x,emoji]);setTimeout(()=>setReactions(x=>x.slice(1)),1800);emit('reaction',{emoji,userId:user.id})};
+  if(!user)return <div className="auth-screen"><div className="auth-box"><div className="brand"><span className="brand-mark">◒</span><span>ORBIT</span></div><h1>Watch together,<br/><em>wherever you are.</em></h1><p>Sign in to create a private room and watch in sync with your friends.</p><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email address" type="email"/><input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" type="password"/><button className="primary" onClick={auth}>{mode==='login'?'Sign in':'Create account'}</button>{authError&&<div className="error">{authError}</div>}<button className="link-btn" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'New here? Create an account':'Already have an account? Sign in'}</button></div></div>;
+  if(!room)return <div className="auth-screen"><div className="auth-box room-box"><div className="brand"><span className="brand-mark">◒</span><span>ORBIT</span></div><h1>Start a room.</h1><p>Create a private space or join your friends with an invite code.</p><button className="primary" onClick={async()=>{try{setRoom(await createRoom(user.id))}catch(e:any){setRoomError(e.message)}}}>Create private room</button><div className="or"><span/>or<span/></div><input value={roomCode} onChange={e=>setRoomCode(e.target.value.toUpperCase())} placeholder="Enter invite code"/><button className="secondary" onClick={async()=>{try{setRoom(await joinRoom(user.id,roomCode))}catch(e:any){setRoomError(e.message)}}}>Join room</button>{roomError&&<div className="error">{roomError}</div>}<button className="link-btn" onClick={()=>supabase?.auth.signOut()}>Sign out</button></div></div>;
+  return <main className="shell"><header className="topbar"><div className="brand"><span className="brand-mark">◒</span><span>ORBIT</span></div><div className="room-meta"><span className="live-dot"/> ROOM <b>{room.name}</b><span className="divider"/> <span className="lock">⌁</span> PRIVATE</div><div className="top-actions"><button className="icon-btn"><Headphones size={16}/></button><button className="share" onClick={()=>{navigator.clipboard?.writeText(room.invite_code);setCopied(true);setTimeout(()=>setCopied(false),1500)}}><Copy size={15}/> {copied?'Copied':'Copy invite'}</button><div className="avatar small" style={{background:'#c8b6ff'}}>{displayName[0].toUpperCase()}</div></div></header><div className="workspace"><section className="stage-section"><div className="stage-head"><div><p className="eyebrow">NOW WATCHING</p><h1>After Yang</h1></div><div className="sync"><span className="sync-dot"/> synced <b>{Math.floor(position/60).toString().padStart(2,'0')}:{Math.floor(position%60).toString().padStart(2,'0')}</b></div></div><div className="video-frame"><div className="film-bg"><div className="sun"/><div className="film-copy"><span>A film by<br/><strong>KOGONADA</strong></span><em>AFTER<br/>YANG</em></div><div className="grain"/></div><div className="reaction-layer">{reactions.map((r,i)=><span key={i} className="float-reaction" style={{left:`${25+i*17}%`}}>{r}</span>)}</div><div className="video-top"><span>HD</span><span>ROOM {room.invite_code}</span></div><div className="video-bottom"><div className="progress"><span style={{width:`${Math.min(100,position/47.14)}%`}}/></div><div className="controls"><button onClick={()=>sync(!playing)}>{playing?<Pause fill="white"/>:<Play fill="white"/>}</button><span className="time">{Math.floor(position/60).toString().padStart(2,'0')}:{Math.floor(position%60).toString().padStart(2,'0')} / 1:18:34</span><span className="control-spacer"/><button><Volume2/></button><button><Settings/></button><button className="fullscreen">⛶</button></div></div></div><div className="quick-reactions"><span>React</span>{['❤️','😂','👏','😮','🔥'].map(e=><button key={e} onClick={()=>react(e)}>{e}</button>)}<button className="add-react"><Smile size={15}/></button></div></section><aside className="side-panel"><div className="panel-tabs"><button className="active">CHAT <span>{messages.length}</span></button><button>PEOPLE <span>1</span></button></div><div className="presence"><div className="presence-avatars"><div className="avatar mini" style={{background:'#c8b6ff'}}>Y</div></div><span><b>1 person</b> in the room</span></div><div className="chat-list">{messages.map(m=><div className="message" key={m.id}><div className="avatar mini" style={{background:m.color}}>{m.initials}</div><div><div className="message-meta"><b>{m.name}</b><span>{new Date(m.created_at).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}</span></div><p>{m.body}</p></div></div>)}</div><div className="chat-compose"><div className="input-wrap"><input value={chat} onChange={e=>setChat(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Say something..."/><button><Smile size={17}/></button></div><button className="send" onClick={send}><Send size={16}/></button></div></aside></div><footer className="footer"><div className="footer-left"><span className="pulse"/> Playback is synced for everyone</div><div className="footer-center">Invite code <b>{room.invite_code}</b></div><div className="footer-right"><button><Mic size={15}/> Mute</button><button onClick={()=>supabase?.auth.signOut()}><MoreHorizontal size={17}/></button></div></footer></main>;
 }
 createRoot(document.getElementById('root')!).render(<App/>);

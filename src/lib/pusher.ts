@@ -1,7 +1,7 @@
 import Pusher from 'pusher-js';
 
 export const pusher = import.meta.env.VITE_PUSHER_KEY
-  ? new Pusher(import.meta.env.VITE_PUSHER_KEY, { cluster: import.meta.env.VITE_PUSHER_CLUSTER || 'ap1' })
+  ? new Pusher(import.meta.env.VITE_PUSHER_KEY, { cluster: import.meta.env.VITE_PUSHER_CLUSTER || 'ap1', channelAuthorization: { endpoint: '/api/pusher/auth', transport: 'ajax' } })
   : null;
 
 export type RoomEvent =
